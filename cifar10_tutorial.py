@@ -3,386 +3,334 @@
 Training a Classifier
 =====================
 
-This script trains a Convolutional Neural Network (CNN) on the CIFAR10 dataset using PyTorch.
-It includes data loading, preprocessing, visualization, model definition, training, evaluation,
-and plotting of loss and accuracy metrics over epochs.
-Enhanced with structured logging and progress bars for better monitoring.
-"""
+This is it. You have seen how to define neural networks, compute loss and make
+updates to the weights of the network.
 
+Now you might be thinking,
+
+What about data?
+----------------
+
+Generally, when you have to deal with image, text, audio or video data,
+you can use standard python packages that load data into a numpy array.
+Then you can convert this array into a ``torch.*Tensor``.
+
+-  For images, packages such as Pillow, OpenCV are useful
+-  For audio, packages such as scipy and librosa
+-  For text, either raw Python or Cython based loading, or NLTK and
+   SpaCy are useful
+
+Specifically for vision, we have created a package called
+``torchvision``, that has data loaders for common datasets such as
+Imagenet, CIFAR10, MNIST, etc. and data transformers for images, viz.,
+``torchvision.datasets`` and ``torch.utils.data.DataLoader``.
+
+This provides a huge convenience and avoids writing boilerplate code.
+
+For this tutorial, we will use the CIFAR10 dataset.
+It has the classes: �~@~Xairplane�~@~Y, �~@~Xautomobile�~@~Y, �~@~Xbird�~@~Y, �~@~Xcat�~@~Y, �~@~Xdeer�~@~Y,
+�~@~Xdog�~@~Y, �~@~Xfrog�~@~Y, �~@~Xhorse�~@~Y, �~@~Xship�~@~Y, �~@~Xtruck�~@~Y. The images in CIFAR-10 are of
+size 3x32x32, i.e. 3-channel color images of 32x32 pixels in size.
+
+.. figure:: /_static/img/cifar10.png
+   :alt: cifar10
+
+   cifar10
+
+
+Training an image classifier
+----------------------------
+
+We will do the following steps in order:
+
+1. Load and normalizing the CIFAR10 training and test datasets using
+   ``torchvision``
+2. Define a Convolution Neural Network
+3. Define a loss function
+4. Train the network on the training data
+5. Test the network on the test data
+
+1. Loading and normalizing CIFAR10
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Using ``torchvision``, it�~@~Ys extremely easy to load CIFAR10.
+"""
 import torch
 import torchvision
 import torchvision.transforms as transforms
+
+########################################################################
+# The output of torchvision datasets are PILImage images of range [0, 1].
+# We transform them to Tensors of normalized range [-1, 1].
+
+transform = transforms.Compose(
+    [transforms.ToTensor(),
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+
+trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+                                        download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=1,
+                                          shuffle=True, num_workers=2)
+
+testset = torchvision.datasets.CIFAR10(root='./data', train=False,
+                                       download=True, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=4,
+                                         shuffle=False, num_workers=2)
+
+classes = ('plane', 'car', 'bird', 'cat',
+           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+########################################################################
+# Let us show some of the training images, for fun.
+
 import matplotlib.pyplot as plt
 import numpy as np
+
+# functions to show an image
+
+
+def imshow(img):
+    img = img / 2 + 0.5     # unnormalize
+    npimg = img.numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+
+
+# get some random training images
+dataiter = iter(trainloader)
+images, labels = next(dataiter)  # Fixing the 'next()' error
+
+# show images
+imshow(torchvision.utils.make_grid(images))
+# print labels
+print(' '.join('%5s' % classes[labels[j]] for j in range(1)))
+
+########################################################################
+# 2. Define a Convolution Neural Network
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Copy the neural network from the Neural Networks section before and modify it to
+# take 3-channel images (instead of 1-channel images as it was defined).
+
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
-import logging
-from tqdm import tqdm
-import sys
-import os
 
-# Setup logging
-def setup_logging():
-    """
-    Sets up logging to output to both console and a file.
-    """
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-
-    # Create formatter
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
-    # Create console handler
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
-
-    # Create file handler
-    if not os.path.exists('logs'):
-        os.makedirs('logs')
-    fh = logging.FileHandler('logs/training.log')
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(formatter)
-    logger.addHandler(fh)
-
-# Define the neural network architecture
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        # Convolutional layers
-        self.conv1 = nn.Conv2d(3, 6, 5)   # Input channels: 3 (RGB), Output channels: 6, Kernel size: 5
-        self.pool = nn.MaxPool2d(2, 2)    # Max pooling with kernel size 2 and stride 2
-        self.conv2 = nn.Conv2d(6, 16, 5)  # Input channels: 6, Output channels: 16, Kernel size: 5
-
-        # Fully connected layers
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)  # Input features: 16*5*5, Output features: 120
-        self.fc2 = nn.Linear(120, 84)          # Input features: 120, Output features: 84
-        self.fc3 = nn.Linear(84, 10)           # Input features: 84, Output features: 10 (number of classes)
+        # First convolutional layer: input channels = 3, output channels = 6, kernel size = 5
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)  # Max pooling layer with kernel size = 2 and stride = 2
+        # Second convolutional layer: input channels = 6, output channels = 16, kernel size = 5
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        # Fully connected layer: input features = 16*5*5, output features = 10 (for 10 classes)
+        self.fc1 = nn.Linear(16 * 5 * 5, 10)
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))  # Apply conv1, ReLU, then pool
-        x = self.pool(F.relu(self.conv2(x)))  # Apply conv2, ReLU, then pool
-        x = x.view(-1, 16 * 5 * 5)            # Flatten the tensor
-        x = F.relu(self.fc1(x))               # Apply fc1 and ReLU
-        x = F.relu(self.fc2(x))               # Apply fc2 and ReLU
-        x = self.fc3(x)                       # Apply fc3 (output layer)
+        # Apply first convolutional layer, ReLU activation, and max pooling
+        x = self.pool(F.relu(self.conv1(x)))
+        # Apply second convolutional layer, ReLU activation, and max pooling
+        x = self.pool(F.relu(self.conv2(x)))
+        # Flatten the output for the fully connected layer
+        x = x.view(-1, 16 * 5 * 5)
+        # Apply the fully connected layer
+        x = self.fc1(x)
         return x
 
-# Function to display images
-def imshow(img):
-    """
-    Displays a grid of images.
-    """
-    img = img / 2 + 0.5     # Unnormalize the image
-    npimg = img.numpy()
-    plt.figure(figsize=(10, 10))
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
-    plt.axis('off')
-    plt.show()
+net = Net()
 
-def main():
-    # Setup logging
-    setup_logging()
-    logger = logging.getLogger()
+########################################################################
+# 3. Define a Loss function and optimizer
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Let's use a Classification Cross-Entropy loss and SGD with momentum.
 
-    ########################################################################
-    # 1. Loading and Normalizing CIFAR10
-    ########################################################################
+import torch.optim as optim
 
-    # Define transformations for the training and testing data
-    transform_train = transforms.Compose([
-        transforms.RandomResizedCrop(32, scale=(0.8, 1.0)),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5),  # Mean for each channel
-                             (0.5, 0.5, 0.5))  # Standard deviation for each channel
-    ])
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5),
-                             (0.5, 0.5, 0.5))
-    ])
+########################################################################
+# 4. Train the network
+# ^^^^^^^^^^^^^^^^^^^^
+#
+# This is when things start to get interesting.
+# We simply have to loop over our data iterator, and feed the inputs to the
+# network and optimize.
 
-    logger.info("Loading CIFAR10 dataset with data augmentation for training...")
-    # Download and load the training data with data augmentation
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                            download=True, transform=transform_train)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
-                                              shuffle=True, num_workers=2)
+for epoch in range(50):  # loop over the dataset multiple times
 
-    # Download and load the testing data
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                           download=True, transform=transform_test)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=4,
-                                             shuffle=False, num_workers=2)
+    running_loss = 0.0
+    for i, data in enumerate(trainloader, 0):
+        # get the inputs
+        inputs, labels = data
 
-    # Define the class labels
-    classes = ('plane', 'car', 'bird', 'cat',
-               'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-    logger.info("Dataset loaded successfully.")
+        # zero the parameter gradients
+        optimizer.zero_grad()
 
-    ########################################################################
-    # 2. Visualizing Some Training Images
-    ########################################################################
+        # forward + backward + optimize
+        outputs = net(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
 
-    logger.info("Visualizing some training images...")
-    # Get some random training images
-    dataiter = iter(trainloader)
-    try:
-        images, labels = next(dataiter)
-    except StopIteration:
-        logger.error("No data available in trainloader.")
-        return
+        # print statistics
+        running_loss += loss.item()
+        if i % 2000 == 1999:    # print every 2000 mini-batches
+            print('[%d, %5d] loss: %.3f' %
+                  (epoch + 1, i + 1, running_loss / 2000))
+            running_loss = 0.0
 
-    # Show images
-    imshow(torchvision.utils.make_grid(images))
-    logger.info('GroundTruth: ' + ' '.join('%5s' % classes[labels[j]] for j in range(4)))
+print('Finished Training')
 
-    ########################################################################
-    # 3. Define the Network
-    ########################################################################
+########################################################################
+# 5. Test the network on the test data
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#
+# We have trained the network for 2 passes over the training dataset.
+# But we need to check if the network has learnt anything at all.
+#
+# We will check this by predicting the class label that the neural network
+# outputs, and checking it against the ground-truth. If the prediction is
+# correct, we add the sample to the list of correct predictions.
+#
+# Okay, first step. Let us display an image from the test set to get familiar.
 
-    logger.info("Initializing the network...")
-    net = Net()
-    logger.info("Network initialized.")
+dataiter = iter(testloader)
+images, labels = next(dataiter)  # Fixing the 'next()' error
 
-    ########################################################################
-    # 4. Define Loss Function and Optimizer
-    ########################################################################
+# print images
+imshow(torchvision.utils.make_grid(images))
+print('GroundTruth: ', ' '.join('%5s' % classes[labels[j]] for j in range(4)))
 
-    logger.info("Setting up the loss function and optimizer...")
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
-    logger.info("Loss function and optimizer set.")
+########################################################################
+# Okay, now let us see what the neural network thinks these examples above are:
 
-    ########################################################################
-    # 5. Training the Network
-    ########################################################################
+outputs = net(images)
 
-    # Determine the device to run on (GPU if available, else CPU)
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    logger.info(f'Using device: {device}')
+########################################################################
+# The outputs are energies for the 10 classes.
+# Higher the energy for a class, the more the network
+# thinks that the image is of the particular class.
+# So, let's get the index of the highest energy:
+_, predicted = torch.max(outputs, 1)
 
-    # Move the network to the selected device
-    net.to(device)
+print('Predicted: ', ' '.join('%5s' % classes[predicted[j]] for j in range(len(predicted))))
 
-    num_epochs = 50  # Set to 50 as per assignment requirement
+########################################################################
+# The results seem pretty good.
+#
+# Let us look at how the network performs on the whole dataset.
 
-    # Initialize lists to store metrics
-    train_losses = []
-    train_accuracies = []
-    test_accuracies = []
+correct = 0
+total = 0
+with torch.no_grad():
+    for data in testloader:
+        images, labels = data
+        outputs = net(images)
+        _, predicted = torch.max(outputs.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
 
-    logger.info(f'Starting training for {num_epochs} epochs...')
-    for epoch in range(num_epochs):  # Loop over the dataset multiple times
-        logger.info(f'Epoch {epoch + 1}/{num_epochs}')
-        running_loss = 0.0
-        correct_train = 0
-        total_train = 0
+print('Accuracy of the network on the 10000 test images: %d %%' % (
+    100 * correct / total))
 
-        # Initialize tqdm progress bar for training
-        progress_bar = tqdm(enumerate(trainloader, 0), total=len(trainloader), desc='Training', ncols=100)
+########################################################################
+# That looks waaay better than chance, which is 10% accuracy (randomly picking
+# a class out of 10 classes).
+# Seems like the network learnt something.
+#
+# Hmmm, what are the classes that performed well, and the classes that did
+# not perform well:
 
-        for i, data in progress_bar:
-            # Get the inputs; data is a list of [inputs, labels]
-            inputs, labels = data
-            inputs, labels = inputs.to(device), labels.to(device)  # Move to device
+class_correct = list(0. for i in range(10))
+class_total = list(0. for i in range(10))
+with torch.no_grad():
+    for data in testloader:
+        images, labels = data
+        outputs = net(images)
+        _, predicted = torch.max(outputs, 1)
+        c = (predicted == labels).squeeze()
+        for i in range(4):
+            label = labels[i]
+            class_correct[label] += c[i].item()
+            class_total[label] += 1
 
-            # Zero the parameter gradients
-            optimizer.zero_grad()
 
-            # Forward pass
-            outputs = net(inputs)
-            loss = criterion(outputs, labels)
+for i in range(10):
+    print('Accuracy of %5s : %2d %%' % (
+        classes[i], 100 * class_correct[i] / class_total[i]))
 
-            # Backward pass and optimize
-            loss.backward()
-            optimizer.step()
+########################################################################
+# Okay, so what next?
+#
+# How do we run these neural networks on the GPU?
+#
+# Training on GPU
+# ----------------
+# Just like how you transfer a Tensor on to the GPU, you transfer the neural
+# net onto the GPU.
+#
+# Let's first define our device as the first visible cuda device if we have
+# CUDA available:
 
-            # Accumulate loss
-            running_loss += loss.item()
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            # Calculate training accuracy on the fly
-            _, predicted = torch.max(outputs.data, 1)
-            total_train += labels.size(0)
-            correct_train += (predicted == labels).sum().item()
+# Assume that we are on a CUDA machine, then this should print a CUDA device:
 
-            # Update progress bar
-            if (i + 1) % 2000 == 0:
-                avg_loss = running_loss / 2000
-                progress_bar.set_postfix(loss=avg_loss)
-                logger.info(f'[{epoch + 1}, {i + 1:5d}] loss: {avg_loss:.3f}')
-                running_loss = 0.0
+print(device)
 
-        progress_bar.close()
+########################################################################
+# The rest of this section assumes that `device` is a CUDA device.
+#
+# Then these methods will recursively go over all modules and convert their
+# parameters and buffers to CUDA tensors:
+#
+# .. code:: python
+#
+#     net.to(device)
+#
+#
+# Remember that you will have to send the inputs and targets at every step
+# to the GPU too:
+#
+# .. code:: python
+#
+#         inputs, labels = inputs.to(device), labels.to(device)
+#
+# Why dont I notice MASSIVE speedup compared to CPU? Because your network
+# is realllly small.
+#
+# **Exercise:** Try increasing the width of your network (argument 2 of
+# the first ``nn.Conv2d``, and argument 1 of the second ``nn.Conv2d`` �~@~S
+# they need to be the same number), see what kind of speedup you get.
+#
+# **Goals achieved**:
+#
+# - Understanding PyTorch's Tensor library and neural networks at a high level.
+# - Train a small neural network to classify images
+#
+# Training on multiple GPUs
+# -------------------------
+# If you want to see even more MASSIVE speedup using all of your GPUs,
+# please check out :doc:`data_parallel_tutorial`.
+#
+# Where do I go next?
+# -------------------
+#
+# -  :doc:`Train neural nets to play video games </intermediate/reinforcement_q_learning>`
+# -  `Train a state-of-the-art ResNet network on imagenet`_
+# -  `Train a face generator using Generative Adversarial Networks`_
+# -  `Train a word-level language model using Recurrent LSTM networks`_
+# -  `More examples`_
+# -  `More tutorials`_
+# -  `Discuss PyTorch on the Forums`_
+# -  `Chat with other users on Slack`_
+#
+# .. _Train a state-of-the-art ResNet network on imagenet: https://github.com/pytorch/examples/tree/master/imagenet
+# .. _Train a face generator using Generative Adversarial Networks: https://github.com/pytorch/examples/tree/master/dcgan
+# .. _Train a word-level language model using Recurrent LSTM networks: https://github.com/pytorch/examples/tree/master/word_language_model
+# .. _More examples: https://github.com/pytorch/examples
+# .. _More tutorials: https://github.com/pytorch/tutorials
+# .. _Discuss PyTorch on the Forums: https://discuss.pytorch.org/
+# .. _Chat with other users on Slack: http://pytorch.slack.com/messages/beginner/
 
-        # Calculate average loss and accuracy for the epoch
-        epoch_loss = running_loss / len(trainloader)
-        epoch_accuracy = 100 * correct_train / total_train
-        train_losses.append(epoch_loss)
-        train_accuracies.append(epoch_accuracy)
-
-        # Evaluate on test data after each epoch
-        logger.info("Evaluating on test data...")
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            # Initialize tqdm progress bar for testing
-            test_progress = tqdm(enumerate(testloader, 0), total=len(testloader), desc='Testing', ncols=100)
-            for i, data in test_progress:
-                images, labels = data
-                images, labels = images.to(device), labels.to(device)  # Move to device
-                outputs = net(images)
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
-            test_progress.close()
-
-        test_accuracy = 100 * correct / total
-        test_accuracies.append(test_accuracy)
-
-        logger.info(f'Epoch {epoch + 1} Summary: Loss={epoch_loss:.3f}, Training Accuracy={epoch_accuracy:.2f}%, Test Accuracy={test_accuracy:.2f}%')
-
-    logger.info('Finished Training')
-
-    ########################################################################
-    # 6. Testing the Network on the Test Data (Final Evaluation)
-    ########################################################################
-
-    logger.info("Final evaluation on test data...")
-    # Get some random testing images
-    dataiter = iter(testloader)
-    try:
-        images, labels = next(dataiter)
-    except StopIteration:
-        logger.error("No data available in testloader.")
-        return
-
-    # Show images
-    imshow(torchvision.utils.make_grid(images))
-    logger.info('GroundTruth: ' + ' '.join('%5s' % classes[labels[j]] for j in range(4)))
-
-    # Move images and labels to device
-    images, labels = images.to(device), labels.to(device)
-
-    # Make predictions
-    outputs = net(images)
-    _, predicted = torch.max(outputs, 1)
-
-    logger.info('Predicted: ' + ' '.join('%5s' % classes[predicted[j]]
-                                      for j in range(4)))
-
-    ########################################################################
-    # 7. Overall Test Accuracy
-    ########################################################################
-
-    logger.info("Calculating overall test accuracy...")
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        # Initialize tqdm progress bar
-        progress_bar = tqdm(enumerate(testloader, 0), total=len(testloader), desc='Overall Testing', ncols=100)
-        for i, data in progress_bar:
-            images, labels = data
-            images, labels = images.to(device), labels.to(device)  # Move to device
-            outputs = net(images)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-        progress_bar.close()
-
-    accuracy = 100 * correct / total
-    logger.info(f'Accuracy of the network on the 10000 test images: {accuracy:.2f} %')
-
-    ########################################################################
-    # 8. Per-Class Accuracy
-    ########################################################################
-
-    logger.info("Calculating per-class accuracy...")
-    class_correct = list(0. for i in range(10))
-    class_total = list(0. for i in range(10))
-    with torch.no_grad():
-        # Initialize tqdm progress bar
-        progress_bar = tqdm(enumerate(testloader, 0), total=len(testloader), desc='Per-Class Testing', ncols=100)
-        for i, data in progress_bar:
-            images, labels = data
-            images, labels = images.to(device), labels.to(device)  # Move to device
-            outputs = net(images)
-            _, predicted = torch.max(outputs, 1)
-            c = (predicted == labels).squeeze()
-            for j in range(len(labels)):
-                label = labels[j]
-                class_correct[label] += c[j].item()
-                class_total[label] += 1
-        progress_bar.close()
-
-    for i in range(10):
-        if class_total[i] > 0:
-            class_accuracy = 100 * class_correct[i] / class_total[i]
-            logger.info(f'Accuracy of {classes[i]:5s} : {class_accuracy:.2f} %')
-        else:
-            logger.info(f'Accuracy of {classes[i]:5s} : N/A (no samples)')
-
-    ########################################################################
-    # 9. Plotting Metrics
-    ########################################################################
-
-    logger.info("Plotting training and test metrics...")
-    epochs = range(1, num_epochs + 1)
-
-    plt.figure(figsize=(18, 5))
-
-    # Plot Loss
-    plt.subplot(1, 3, 1)
-    plt.plot(epochs, train_losses, label='Training Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Training Loss over Epochs')
-    plt.legend()
-
-    # Plot Training Accuracy
-    plt.subplot(1, 3, 2)
-    plt.plot(epochs, train_accuracies, label='Training Accuracy', color='orange')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy (%)')
-    plt.title('Training Accuracy over Epochs')
-    plt.legend()
-
-    # Plot Test Accuracy
-    plt.subplot(1, 3, 3)
-    plt.plot(epochs, test_accuracies, label='Test Accuracy', color='green')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy (%)')
-    plt.title('Test Accuracy over Epochs')
-    plt.legend()
-
-    plt.tight_layout()
-    plt.show()
-
-    ########################################################################
-    # 10. GPU Utilization (Optional)
-    ########################################################################
-
-    logger.info("GPU Utilization Information:")
-    if torch.cuda.is_available():
-        logger.info(torch.cuda.get_device_name(0))
-        logger.info(f'Allocated GPU memory: {torch.cuda.memory_allocated(0)} bytes')
-        logger.info(f'Cached GPU memory: {torch.cuda.memory_reserved(0)} bytes')
-    else:
-        logger.info("CUDA is not available. Running on CPU.")
-
-    ########################################################################
-    # 11. Saving the Trained Model
-    ########################################################################
-
-    logger.info("Saving the trained model...")
-    if not os.path.exists('models'):
-        os.makedirs('models')
-    torch.save(net.state_dict(), 'models/cifar10_net.pth')
-    logger.info("Trained model saved to 'models/cifar10_net.pth'")
-
-if __name__ == "__main__":
-    main()
+~                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+~                                                                                                       
